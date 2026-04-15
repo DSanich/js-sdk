@@ -137,6 +137,10 @@ export type ParseWalletConnectUrlOptions = {
   /**
    * When true (default), the connection string must include a valid `secret`
    * (64-char hex or `nsec` bech32).
+   *
+   * When false, {@link NWCClient} must still receive a client `secret` via
+   * constructor options if you intend to call wallet APIs or
+   * {@link NWCClient.getNostrWalletConnectUrl}.
    */
   requireSecret?: boolean;
 };
@@ -154,7 +158,11 @@ export type NewNWCClientOptions = {
   walletPubkey?: string;
   nostrWalletConnectUrl?: string;
   lud16?: string;
-  /** Used only when {@link nostrWalletConnectUrl} is set. */
+  /**
+   * Used only when {@link nostrWalletConnectUrl} is set.
+   * If {@link ParseWalletConnectUrlOptions.requireSecret} is false and the URI
+   * omits `secret`, you must pass `secret` alongside `nostrWalletConnectUrl`.
+   */
   parseWalletConnectUrlOptions?: ParseWalletConnectUrlOptions;
 };
 
@@ -210,13 +218,22 @@ export class NWCClient {
   constructor(options?: NewNWCClientOptions) {
     if (options && options.nostrWalletConnectUrl) {
       const { parseWalletConnectUrlOptions, ...rest } = options;
+      const parsed = NWCClient.parseWalletConnectUrl(
+        options.nostrWalletConnectUrl,
+        parseWalletConnectUrlOptions,
+      );
       options = {
-        ...NWCClient.parseWalletConnectUrl(
-          options.nostrWalletConnectUrl,
-          parseWalletConnectUrlOptions,
-        ),
+        ...parsed,
         ...rest,
       };
+      if (
+        parseWalletConnectUrlOptions?.requireSecret === false &&
+        !options.secret
+      ) {
+        throw new Error(
+          "NWCClient requires a client secret: pass `secret` when using parseWalletConnectUrlOptions.requireSecret: false without a secret in the URI",
+        );
+      }
     }
     this.options = {
       ...(options || {}),
@@ -252,6 +269,11 @@ export class NWCClient {
   }
 
   getNostrWalletConnectUrl(includeSecret = true) {
+    if (!this.secret) {
+      throw new Error(
+        "Cannot build Nostr Wallet Connect URL without a client secret",
+      );
+    }
     let url = `nostr+walletconnect://${this.walletPubkey}?relay=${this.relayUrls.join("&relay=")}&pubkey=${this.publicKey}`;
     if (includeSecret) {
       url = `${url}&secret=${this.secret}`;
