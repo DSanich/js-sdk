@@ -43,36 +43,36 @@ describe("NWC notifications", () => {
           description: "E2E notifications payment_received test",
         });
 
-        const receivedNotification = new Promise<Nip47Notification>(
+        const notification = await new Promise<Nip47Notification>(
           (resolve, reject) => {
             const timeout = setTimeout(() => {
               reject(new Error("Timed out waiting for payment notification"));
             }, 20_000);
 
-            receiverClient
-              .subscribeNotifications(
-                (notification) => {
-                  if (notification.notification.invoice !== invoiceResult.invoice) {
-                    return;
-                  }
-                  clearTimeout(timeout);
-                  resolve(notification);
-                },
-                ["payment_received" as Nip47NotificationType],
-              )
-              .then((unsub) => {
-                unsubscribe = unsub;
-              })
-              .catch((error) => {
+            void (async () => {
+              try {
+                unsubscribe = await receiverClient.subscribeNotifications(
+                  (notification) => {
+                    if (
+                      notification.notification.invoice !== invoiceResult.invoice
+                    ) {
+                      return;
+                    }
+                    clearTimeout(timeout);
+                    resolve(notification);
+                  },
+                  ["payment_received" as Nip47NotificationType],
+                );
+                await senderClient.payInvoice({
+                  invoice: invoiceResult.invoice,
+                });
+              } catch (error) {
                 clearTimeout(timeout);
                 reject(error);
-              });
+              }
+            })();
           },
         );
-
-        await senderClient.payInvoice({ invoice: invoiceResult.invoice });
-
-        const notification = await receivedNotification;
         expect(notification.notification_type).toBe("payment_received");
         expect(notification.notification.invoice).toBe(invoiceResult.invoice);
       } catch (error) {

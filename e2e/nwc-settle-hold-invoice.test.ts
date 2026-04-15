@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from "crypto";
 import { NWCClient } from "../src/nwc/NWCClient";
-import { Nip47WalletError } from "../src/nwc/types";
 import { createTestWallet } from "./helpers";
 
 /**
@@ -47,19 +46,23 @@ describe("NWC settle_hold_invoice", () => {
         });
         expect(holdInvoice.invoice).toMatch(/^ln/);
 
-        const payPromise = senderClient.payInvoice({ invoice: holdInvoice.invoice });
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-
-        const settleResult = await receiverClient.settleHoldInvoice({
-          preimage: preimageHex,
+        const payPromise = senderClient.payInvoice({
+          invoice: holdInvoice.invoice,
         });
-        expect(settleResult).toEqual({});
+        try {
+          await new Promise((resolve) => setTimeout(resolve, 1500));
 
-        const payResult = await payPromise;
-        expect(payResult.preimage).toBe(preimageHex);
-      } catch (error) {
-        expect(error).toBeInstanceOf(Nip47WalletError);
-        expect((error as Nip47WalletError).code).toBe("NOT_IMPLEMENTED");
+          const settleResult = await receiverClient.settleHoldInvoice({
+            preimage: preimageHex,
+          });
+          expect(settleResult).toEqual({});
+
+          const payResult = await payPromise;
+          expect(payResult.preimage).toBe(preimageHex);
+        } catch (error) {
+          await payPromise.catch(() => {});
+          throw error;
+        }
       } finally {
         receiverClient.close();
         senderClient.close();
