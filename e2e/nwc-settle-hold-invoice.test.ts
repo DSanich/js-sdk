@@ -11,7 +11,7 @@ describe("NWC settle_hold_invoice", () => {
   const BALANCE_SATS = 10_000;
 
   test(
-    "settles hold invoice flow when supported, otherwise returns NOT_IMPLEMENTED",
+    "settles hold invoice flow when supported, otherwise NOT_IMPLEMENTED",
     async () => {
       const receiver = await createTestWallet(BALANCE_SATS);
       const sender = await createTestWallet(BALANCE_SATS);

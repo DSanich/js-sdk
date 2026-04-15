@@ -2,7 +2,6 @@ import { NWCClient } from "../src/nwc/NWCClient";
 import {
   Nip47Notification,
   Nip47NotificationType,
-  Nip47WalletError,
 } from "../src/nwc/types";
 import { createTestWallet } from "./helpers";
 
@@ -49,17 +48,15 @@ describe("NWC notifications", () => {
               reject(new Error("Timed out waiting for payment notification"));
             }, 20_000);
 
-            void (async () => {
+            const subscribeAndPay = async () => {
               try {
                 unsubscribe = await receiverClient.subscribeNotifications(
-                  (notification) => {
-                    if (
-                      notification.notification.invoice !== invoiceResult.invoice
-                    ) {
+                  (n) => {
+                    if (n.notification.invoice !== invoiceResult.invoice) {
                       return;
                     }
                     clearTimeout(timeout);
-                    resolve(notification);
+                    resolve(n);
                   },
                   ["payment_received" as Nip47NotificationType],
                 );
@@ -70,17 +67,12 @@ describe("NWC notifications", () => {
                 clearTimeout(timeout);
                 reject(error);
               }
-            })();
+            };
+            subscribeAndPay();
           },
         );
         expect(notification.notification_type).toBe("payment_received");
         expect(notification.notification.invoice).toBe(invoiceResult.invoice);
-      } catch (error) {
-        if (error instanceof Nip47WalletError) {
-          expect(error.code).toBe("NOT_IMPLEMENTED");
-        } else {
-          throw error;
-        }
       } finally {
         unsubscribe?.();
         receiverClient.close();
