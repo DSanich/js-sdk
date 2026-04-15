@@ -1,5 +1,4 @@
 import { NWCClient } from "../src/nwc/NWCClient";
-import { Nip47WalletError } from "../src/nwc/types";
 import { createTestWallet } from "./helpers";
 
 /**
@@ -19,7 +18,7 @@ describe("NWC multi_pay_keysend", () => {
   }, 60_000);
 
   test(
-    "sends multiple keysends when supported, otherwise returns NOT_IMPLEMENTED",
+    "sends multiple keysends when supported",
     async () => {
       const receiverClient = new NWCClient({
         nostrWalletConnectUrl: receiver.nwcUrl,
@@ -53,9 +52,6 @@ describe("NWC multi_pay_keysend", () => {
         expect(multiPayResult.errors).toEqual([]);
         expect(multiPayResult.keysends[0].preimage).toBeDefined();
         expect(multiPayResult.keysends[1].preimage).toBeDefined();
-      } catch (error) {
-        expect(error).toBeInstanceOf(Nip47WalletError);
-        expect((error as Nip47WalletError).code).toBe("NOT_IMPLEMENTED");
       } finally {
         receiverClient.close();
         senderClient.close();

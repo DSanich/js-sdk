@@ -9,19 +9,29 @@ describe("NWC get_info", () => {
   const BALANCE_SATS = 10_000;
 
   test(
-    "returns wallet pubkey and supported methods",
+    "returns wallet metadata and supported methods",
     async () => {
       const { nwcUrl } = await createTestWallet(BALANCE_SATS);
       const nwc = new NWCClient({ nostrWalletConnectUrl: nwcUrl });
 
       try {
-        const infoResult = await nwc.getInfo();
+        const info = await nwc.getInfo();
 
-        expect(infoResult.pubkey).toBeDefined();
-        expect(typeof infoResult.pubkey).toBe("string");
+        expect(typeof info.alias).toBe("string");
+        // NIP-47 implementations may return x-only (64 hex) or compressed secp256k1 (66 hex, 02/03 prefix).
+        expect(info.pubkey).toMatch(/^(02|03)[0-9a-f]{64}$|^[0-9a-f]{64}$/i);
+        expect(typeof info.color).toBe("string");
+        expect(typeof info.network).toBe("string");
+        expect(info.network.length).toBeGreaterThan(0);
+        expect(typeof info.block_height).toBe("number");
+        expect(info.block_height).toBeGreaterThanOrEqual(0);
+        expect(typeof info.block_hash).toBe("string");
+        expect(info.block_hash.length).toBeGreaterThan(0);
 
-        expect(Array.isArray(infoResult.methods)).toBe(true);
-        expect(infoResult.methods.length).toBeGreaterThan(0);
+        expect(Array.isArray(info.methods)).toBe(true);
+        expect(info.methods.length).toBeGreaterThan(0);
+        expect(info.methods).toContain("get_info");
+        expect(info.methods).toContain("get_balance");
       } finally {
         nwc.close();
       }

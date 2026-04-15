@@ -10,7 +10,7 @@ describe("NWC get_budget", () => {
   const BALANCE_SATS = 10_000;
 
   test(
-    "returns budget details or reports unsupported method",
+    "returns budget details, empty object, or NOT_IMPLEMENTED",
     async () => {
       const { nwcUrl } = await createTestWallet(BALANCE_SATS);
       const nwc = new NWCClient({ nostrWalletConnectUrl: nwcUrl });
@@ -31,8 +31,10 @@ describe("NWC get_budget", () => {
 
         expect(budgetResult).toEqual({});
       } catch (error) {
-        expect(error).toBeInstanceOf(Nip47WalletError);
-        expect((error as Nip47WalletError).code).toBe("NOT_IMPLEMENTED");
+        if (error instanceof Nip47WalletError && error.code === "NOT_IMPLEMENTED") {
+          return;
+        }
+        throw error;
       } finally {
         nwc.close();
       }

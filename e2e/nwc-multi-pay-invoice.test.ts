@@ -1,5 +1,4 @@
 import { NWCClient } from "../src/nwc/NWCClient";
-import { Nip47WalletError } from "../src/nwc/types";
 import { createTestWallet } from "./helpers";
 
 /**
@@ -19,7 +18,7 @@ describe("NWC multi_pay_invoice", () => {
   }, 60_000);
 
   test(
-    "pays multiple invoices when supported, otherwise returns NOT_IMPLEMENTED",
+    "pays multiple invoices when supported",
     async () => {
       const receiverClient = new NWCClient({
         nostrWalletConnectUrl: receiver.nwcUrl,
@@ -59,9 +58,6 @@ describe("NWC multi_pay_invoice", () => {
         expect(multiPayResult.errors).toEqual([]);
         expect(multiPayResult.invoices[0].preimage).toBeDefined();
         expect(multiPayResult.invoices[1].preimage).toBeDefined();
-      } catch (error) {
-        expect(error).toBeInstanceOf(Nip47WalletError);
-        expect((error as Nip47WalletError).code).toBe("NOT_IMPLEMENTED");
       } finally {
         receiverClient.close();
         senderClient.close();
