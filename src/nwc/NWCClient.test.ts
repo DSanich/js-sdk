@@ -1,9 +1,14 @@
 import "websocket-polyfill";
+import { generateSecretKey, nip19 } from "nostr-tools";
+import { bytesToHex } from "@noble/hashes/utils";
 import { NWCClient } from "./NWCClient";
 
 // this has no funds on it, I think ;-)
 const exampleNwcUrl =
   "nostr+walletconnect://69effe7b49a6dd5cf525bd0905917a5005ffe480b58eeb8e861418cf3ae760d9?relay=wss://relay.getalby.com/v1&relay=wss://relay2.getalby.com/v1&secret=e839faf78693765b3833027fefa5a305c78f6965d0a5d2e47a3fcb25aa7cc45b&lud16=hello@getalby.com";
+
+const exampleWalletNpub =
+  "npub1d8hlu76f5mw4eaf9h5ystyt62qzlleyqkk8whr5xzsvv7wh8vrvsnzt7xh";
 
 describe("parseWalletConnectUrl", () => {
   test("standard protocol", () => {
@@ -49,6 +54,115 @@ describe("parseWalletConnectUrl", () => {
       "wss://relay.getalby.com/v1",
       "wss://relay2.getalby.com/v1",
     ]);
+  });
+
+  test("npub in host decodes to hex pubkey", () => {
+    const url = exampleNwcUrl.replace(
+      "69effe7b49a6dd5cf525bd0905917a5005ffe480b58eeb8e861418cf3ae760d9",
+      exampleWalletNpub,
+    );
+    const parsed = NWCClient.parseWalletConnectUrl(url);
+    expect(parsed.walletPubkey).toBe(
+      "69effe7b49a6dd5cf525bd0905917a5005ffe480b58eeb8e861418cf3ae760d9",
+    );
+  });
+
+  test("nsec secret is normalized to hex", () => {
+    const sk = generateSecretKey();
+    const nsec = nip19.nsecEncode(sk);
+    const hexSecret = bytesToHex(sk);
+    const url = exampleNwcUrl.replace(
+      "secret=e839faf78693765b3833027fefa5a305c78f6965d0a5d2e47a3fcb25aa7cc45b",
+      `secret=${encodeURIComponent(nsec)}`,
+    );
+    const parsed = NWCClient.parseWalletConnectUrl(url);
+    expect(parsed.secret).toBe(hexSecret);
+    const client = new NWCClient({ nostrWalletConnectUrl: url });
+    expect(client.secret).toBe(hexSecret);
+  });
+
+  test("rejects connection string with no relay", () => {
+    expect(() =>
+      NWCClient.parseWalletConnectUrl(
+        "nostr+walletconnect://69effe7b49a6dd5cf525bd0905917a5005ffe480b58eeb8e861418cf3ae760d9?secret=e839faf78693765b3833027fefa5a305c78f6965d0a5d2e47a3fcb25aa7cc45b",
+      ),
+    ).toThrow("No relay URL found in connection string");
+  });
+
+  test("rejects connection string with only empty relay params", () => {
+    expect(() =>
+      NWCClient.parseWalletConnectUrl(
+        "nostr+walletconnect://69effe7b49a6dd5cf525bd0905917a5005ffe480b58eeb8e861418cf3ae760d9?relay=&relay=%20&secret=e839faf78693765b3833027fefa5a305c78f6965d0a5d2e47a3fcb25aa7cc45b",
+      ),
+    ).toThrow("No relay URL found in connection string");
+  });
+
+  test("rejects invalid relay URL", () => {
+    expect(() =>
+      NWCClient.parseWalletConnectUrl(
+        "nostr+walletconnect://69effe7b49a6dd5cf525bd0905917a5005ffe480b58eeb8e861418cf3ae760d9?relay=not-a-valid-url&secret=e839faf78693765b3833027fefa5a305c78f6965d0a5d2e47a3fcb25aa7cc45b",
+      ),
+    ).toThrow("Invalid relay URL in connection string");
+  });
+
+  test("rejects relay URL with unsupported protocol", () => {
+    expect(() =>
+      NWCClient.parseWalletConnectUrl(
+        "nostr+walletconnect://69effe7b49a6dd5cf525bd0905917a5005ffe480b58eeb8e861418cf3ae760d9?relay=ftp://relay.example.com&secret=e839faf78693765b3833027fefa5a305c78f6965d0a5d2e47a3fcb25aa7cc45b",
+      ),
+    ).toThrow("Invalid relay URL in connection string");
+  });
+
+  test("rejects invalid wallet pubkey", () => {
+    expect(() =>
+      NWCClient.parseWalletConnectUrl(
+        "nostr+walletconnect://not64hex?relay=wss://relay.getalby.com/v1&secret=e839faf78693765b3833027fefa5a305c78f6965d0a5d2e47a3fcb25aa7cc45b",
+      ),
+    ).toThrow("Invalid wallet pubkey in connection string");
+  });
+
+  test("rejects wrong-length hex wallet pubkey", () => {
+    expect(() =>
+      NWCClient.parseWalletConnectUrl(
+        "nostr+walletconnect://69effe7b49a6dd5cf525bd0905917a5005ffe480b58eeb8e861418cf3ae760?relay=wss://relay.getalby.com/v1&secret=e839faf78693765b3833027fefa5a305c78f6965d0a5d2e47a3fcb25aa7cc45b",
+      ),
+    ).toThrow("Invalid wallet pubkey in connection string");
+  });
+
+  test("rejects missing secret by default", () => {
+    expect(() =>
+      NWCClient.parseWalletConnectUrl(
+        "nostr+walletconnect://69effe7b49a6dd5cf525bd0905917a5005ffe480b58eeb8e861418cf3ae760d9?relay=wss://relay.getalby.com/v1",
+      ),
+    ).toThrow("No secret found in connection string");
+  });
+
+  test("allows missing secret when requireSecret is false", () => {
+    const parsed = NWCClient.parseWalletConnectUrl(
+      "nostr+walletconnect://69effe7b49a6dd5cf525bd0905917a5005ffe480b58eeb8e861418cf3ae760d9?relay=wss://relay.getalby.com/v1",
+      { requireSecret: false },
+    );
+    expect(parsed.secret).toBeUndefined();
+  });
+
+  test("rejects invalid secret", () => {
+    expect(() =>
+      NWCClient.parseWalletConnectUrl(
+        "nostr+walletconnect://69effe7b49a6dd5cf525bd0905917a5005ffe480b58eeb8e861418cf3ae760d9?relay=wss://relay.getalby.com/v1&secret=not_hex",
+      ),
+    ).toThrow("Invalid secret in connection string");
+  });
+
+  test("passes parseWalletConnectUrlOptions from constructor", () => {
+    const client = new NWCClient({
+      nostrWalletConnectUrl:
+        "nostr+walletconnect://69effe7b49a6dd5cf525bd0905917a5005ffe480b58eeb8e861418cf3ae760d9?relay=wss://relay.getalby.com/v1",
+      parseWalletConnectUrlOptions: { requireSecret: false },
+    });
+    expect(client.secret).toBeUndefined();
+    expect(client.walletPubkey).toBe(
+      "69effe7b49a6dd5cf525bd0905917a5005ffe480b58eeb8e861418cf3ae760d9",
+    );
   });
 });
 

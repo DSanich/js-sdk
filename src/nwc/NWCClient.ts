@@ -57,6 +57,90 @@ import {
 } from "./types";
 import { SubCloser } from "nostr-tools/lib/types/abstract-pool";
 
+const NWC_HEX64 = /^[0-9a-fA-F]{64}$/;
+
+function parseNwcRelayUrls(relayParams: string[]): string[] {
+  const trimmed = relayParams
+    .map((r) => r.trim())
+    .filter((r) => r.length > 0);
+  if (!trimmed.length) {
+    throw new Error("No relay URL found in connection string");
+  }
+  for (const relay of trimmed) {
+    let parsed: URL;
+    try {
+      parsed = new URL(relay);
+    } catch {
+      throw new Error(`Invalid relay URL in connection string: ${relay}`);
+    }
+    if (
+      parsed.protocol !== "wss:" &&
+      parsed.protocol !== "ws:" &&
+      parsed.protocol !== "https:" &&
+      parsed.protocol !== "http:"
+    ) {
+      throw new Error(`Invalid relay URL in connection string: ${relay}`);
+    }
+  }
+  return trimmed;
+}
+
+function parseNwcWalletPubkeyFromHost(host: string): string {
+  const h = host.trim();
+  if (NWC_HEX64.test(h)) {
+    return h.toLowerCase();
+  }
+  const lower = h.toLowerCase();
+  if (lower.startsWith("npub")) {
+    let decoded: ReturnType<typeof nip19.decode>;
+    try {
+      decoded = nip19.decode(h);
+    } catch {
+      throw new Error("Invalid wallet pubkey in connection string");
+    }
+    if (decoded.type !== "npub") {
+      throw new Error("Invalid wallet pubkey in connection string");
+    }
+    return decoded.data as string;
+  }
+  throw new Error("Invalid wallet pubkey in connection string");
+}
+
+function parseNwcSecretParam(secret: string): string {
+  const s = secret.trim();
+  if (!s) {
+    throw new Error("Invalid secret in connection string");
+  }
+  if (s.toLowerCase().startsWith("nsec")) {
+    let decoded: ReturnType<typeof nip19.decode>;
+    try {
+      decoded = nip19.decode(s);
+    } catch {
+      throw new Error("Invalid secret in connection string");
+    }
+    if (decoded.type !== "nsec") {
+      throw new Error("Invalid secret in connection string");
+    }
+    if (!(decoded.data instanceof Uint8Array)) {
+      throw new Error("Invalid secret in connection string");
+    }
+    return bytesToHex(decoded.data);
+  }
+  if (!NWC_HEX64.test(s)) {
+    throw new Error("Invalid secret in connection string");
+  }
+  return s.toLowerCase();
+}
+
+/** Options for {@link NWCClient.parseWalletConnectUrl}. */
+export type ParseWalletConnectUrlOptions = {
+  /**
+   * When true (default), the connection string must include a valid `secret`
+   * (64-char hex or `nsec` bech32).
+   */
+  requireSecret?: boolean;
+};
+
 export interface NWCOptions {
   relayUrls: string[];
   walletPubkey: string;
@@ -70,6 +154,8 @@ export type NewNWCClientOptions = {
   walletPubkey?: string;
   nostrWalletConnectUrl?: string;
   lud16?: string;
+  /** Used only when {@link nostrWalletConnectUrl} is set. */
+  parseWalletConnectUrlOptions?: ParseWalletConnectUrlOptions;
 };
 
 export class NWCClient {
@@ -81,7 +167,15 @@ export class NWCClient {
   options: NWCOptions;
   private _encryptionType: Nip47EncryptionType | undefined;
 
-  static parseWalletConnectUrl(walletConnectUrl: string): NWCOptions {
+  /**
+   * Parse a `nostr+walletconnect` (or legacy `nostrwalletconnect`) URI into {@link NWCOptions}.
+   * Validates wallet pubkey, relay URLs, and by default the `secret` parameter.
+   */
+  static parseWalletConnectUrl(
+    walletConnectUrl: string,
+    parseOptions: ParseWalletConnectUrlOptions = {},
+  ): NWCOptions {
+    const requireSecret = parseOptions.requireSecret !== false;
     // makes it possible to parse with URL in the different environments (browser/node/...)
     // parses both new and legacy protocols, with or without "//"
     walletConnectUrl = walletConnectUrl
@@ -90,18 +184,21 @@ export class NWCClient {
       .replace("nostrwalletconnect:", "http://")
       .replace("nostr+walletconnect:", "http://");
     const url = new URL(walletConnectUrl);
-    const relayParams = url.searchParams.getAll("relay");
-    if (!relayParams) {
-      throw new Error("No relay URL found in connection string");
-    }
+    const relayUrls = parseNwcRelayUrls(url.searchParams.getAll("relay"));
+    const walletPubkey = parseNwcWalletPubkeyFromHost(url.host);
 
     const options: NWCOptions = {
-      walletPubkey: url.host,
-      relayUrls: relayParams,
+      walletPubkey,
+      relayUrls,
     };
     const secret = url.searchParams.get("secret");
-    if (secret) {
-      options.secret = secret;
+    if (requireSecret) {
+      if (secret === null || secret.trim() === "") {
+        throw new Error("No secret found in connection string");
+      }
+      options.secret = parseNwcSecretParam(secret);
+    } else if (secret !== null && secret.trim() !== "") {
+      options.secret = parseNwcSecretParam(secret);
     }
     const lud16 = url.searchParams.get("lud16");
     if (lud16) {
@@ -112,9 +209,13 @@ export class NWCClient {
 
   constructor(options?: NewNWCClientOptions) {
     if (options && options.nostrWalletConnectUrl) {
+      const { parseWalletConnectUrlOptions, ...rest } = options;
       options = {
-        ...NWCClient.parseWalletConnectUrl(options.nostrWalletConnectUrl),
-        ...options,
+        ...NWCClient.parseWalletConnectUrl(
+          options.nostrWalletConnectUrl,
+          parseWalletConnectUrlOptions,
+        ),
+        ...rest,
       };
     }
     this.options = {
