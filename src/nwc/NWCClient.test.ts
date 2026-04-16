@@ -11,8 +11,6 @@ const nwcSharedSecretHex = bytesToHex(generateSecretKey());
 const TEST_RELAY_PRIMARY = "wss://relay.example.invalid/v1";
 const TEST_RELAY_SECONDARY = "wss://relay2.example.invalid/v1";
 
-const exampleWalletNpub = nip19.npubEncode(walletPubkeyHex);
-
 function nwcTestUri(config: {
   scheme?: "nostr+walletconnect://" | "nostr+walletconnect:" | "nostrwalletconnect:";
   host?: string;
@@ -97,21 +95,33 @@ describe("parseWalletConnectUrl", () => {
     ]);
   });
 
-  test("npub in host decodes to hex pubkey", () => {
-    const url = nwcTestUri({ host: exampleWalletNpub });
-    const parsed = NWCClient.parseWalletConnectUrl(url);
-    expect(parsed.walletPubkey).toBe(walletPubkeyHex);
+  test("rejects npub in host (NIP-47 requires hex pubkey)", () => {
+    const url = nwcTestUri({ host: nip19.npubEncode(walletPubkeyHex) });
+    expect(() => NWCClient.parseWalletConnectUrl(url)).toThrow(
+      "Invalid wallet pubkey in connection string",
+    );
   });
 
-  test("nsec secret is normalized to hex", () => {
+  test("rejects nsec in connection string (NIP-47 requires hex secret)", () => {
+    const sk = generateSecretKey();
+    const nsec = nip19.nsecEncode(sk);
+    const url = nwcTestUri({ secret: nsec });
+    expect(() => NWCClient.parseWalletConnectUrl(url)).toThrow(
+      "Invalid secret in connection string",
+    );
+  });
+
+  test("constructor accepts nsec as explicit secret option (normalized to hex)", () => {
     const sk = generateSecretKey();
     const nsec = nip19.nsecEncode(sk);
     const hexSecret = bytesToHex(sk);
-    const url = nwcTestUri({ secret: nsec });
-    const parsed = NWCClient.parseWalletConnectUrl(url);
-    expect(parsed.secret).toBe(hexSecret);
-    const client = new NWCClient({ nostrWalletConnectUrl: url });
+    const client = new NWCClient({
+      nostrWalletConnectUrl: nwcTestUri({ secret: "omit", lud16: "omit" }),
+      parseWalletConnectUrlOptions: { requireSecret: false },
+      secret: nsec,
+    });
     expect(client.secret).toBe(hexSecret);
+    expect(client.publicKey).toBe(getPublicKey(sk));
   });
 
   test("rejects connection string with no relay", () => {
@@ -138,6 +148,19 @@ describe("parseWalletConnectUrl", () => {
     expect(() =>
       NWCClient.parseWalletConnectUrl(
         nwcTestUri({ relays: ["ftp://relay.example.com"] }),
+      ),
+    ).toThrow("Invalid relay URL in connection string");
+  });
+
+  test("rejects relay URL with http or https (NIP-47 uses WebSocket relays)", () => {
+    expect(() =>
+      NWCClient.parseWalletConnectUrl(
+        nwcTestUri({ relays: ["http://relay.example.invalid/v1"] }),
+      ),
+    ).toThrow("Invalid relay URL in connection string");
+    expect(() =>
+      NWCClient.parseWalletConnectUrl(
+        nwcTestUri({ relays: ["https://relay.example.invalid/v1"] }),
       ),
     ).toThrow("Invalid relay URL in connection string");
   });

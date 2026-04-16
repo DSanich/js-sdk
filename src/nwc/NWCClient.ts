@@ -73,12 +73,7 @@ function parseNwcRelayUrls(relayParams: string[]): string[] {
     } catch {
       throw new Error(`Invalid relay URL in connection string: ${relay}`);
     }
-    if (
-      parsed.protocol !== "wss:" &&
-      parsed.protocol !== "ws:" &&
-      parsed.protocol !== "https:" &&
-      parsed.protocol !== "http:"
-    ) {
+    if (parsed.protocol !== "wss:" && parsed.protocol !== "ws:") {
       throw new Error(`Invalid relay URL in connection string: ${relay}`);
     }
   }
@@ -87,46 +82,15 @@ function parseNwcRelayUrls(relayParams: string[]): string[] {
 
 function parseNwcWalletPubkeyFromHost(host: string): string {
   const h = host.trim();
-  if (NWC_HEX64.test(h)) {
-    return h.toLowerCase();
+  if (!NWC_HEX64.test(h)) {
+    throw new Error("Invalid wallet pubkey in connection string");
   }
-  const lower = h.toLowerCase();
-  if (lower.startsWith("npub")) {
-    let decoded: ReturnType<typeof nip19.decode>;
-    try {
-      decoded = nip19.decode(h);
-    } catch {
-      throw new Error("Invalid wallet pubkey in connection string");
-    }
-    if (decoded.type !== "npub") {
-      throw new Error("Invalid wallet pubkey in connection string");
-    }
-    return decoded.data as string;
-  }
-  throw new Error("Invalid wallet pubkey in connection string");
+  return h.toLowerCase();
 }
 
 function parseNwcSecretParam(secret: string): string {
   const s = secret.trim();
-  if (!s) {
-    throw new Error("Invalid secret in connection string");
-  }
-  if (s.toLowerCase().startsWith("nsec")) {
-    let decoded: ReturnType<typeof nip19.decode>;
-    try {
-      decoded = nip19.decode(s);
-    } catch {
-      throw new Error("Invalid secret in connection string");
-    }
-    if (decoded.type !== "nsec") {
-      throw new Error("Invalid secret in connection string");
-    }
-    if (!(decoded.data instanceof Uint8Array)) {
-      throw new Error("Invalid secret in connection string");
-    }
-    return bytesToHex(decoded.data);
-  }
-  if (!NWC_HEX64.test(s)) {
+  if (!s || !NWC_HEX64.test(s)) {
     throw new Error("Invalid secret in connection string");
   }
   return s.toLowerCase();
@@ -136,7 +100,7 @@ function parseNwcSecretParam(secret: string): string {
 export type ParseWalletConnectUrlOptions = {
   /**
    * When true (default), the connection string must include a valid `secret`
-   * (64-char hex or `nsec` bech32).
+   * (64-char hex per NIP-47).
    *
    * When false, {@link NWCClient} must still receive a client `secret` via
    * constructor options if you intend to call wallet APIs or
@@ -243,10 +207,11 @@ export class NWCClient {
     this.pool = new SimplePool({
     });
     if (this.options.secret) {
+      const s = this.options.secret;
       this.secret = (
-        this.options.secret.toLowerCase().startsWith("nsec")
-          ? nip19.decode(this.options.secret).data
-          : this.options.secret
+        s.toLowerCase().startsWith("nsec")
+          ? bytesToHex(nip19.decode(s).data as Uint8Array)
+          : s.toLowerCase()
       ) as string;
     }
     this.lud16 = this.options.lud16;
