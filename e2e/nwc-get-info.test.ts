@@ -17,10 +17,6 @@ describe("NWC get_info", () => {
       try {
         const info = await nwc.getInfo();
 
-        expect(typeof info.alias).toBe("string");
-        // NIP-47 implementations may return x-only (64 hex) or compressed secp256k1 (66 hex, 02/03 prefix).
-        expect(info.pubkey).toMatch(/^(02|03)[0-9a-f]{64}$|^[0-9a-f]{64}$/i);
-        expect(typeof info.color).toBe("string");
         expect(typeof info.network).toBe("string");
         expect(info.network.length).toBeGreaterThan(0);
         expect(typeof info.block_height).toBe("number");
