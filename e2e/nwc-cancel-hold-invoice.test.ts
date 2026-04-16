@@ -16,9 +16,7 @@ describe("NWC cancel_hold_invoice", () => {
   const AMOUNT_MSATS = 100_000; // 100 sats
   const BALANCE_SATS = 10_000;
 
-  test(
-    "cancels hold invoice when supported, otherwise NOT_IMPLEMENTED or RESTRICTED",
-    async () => {
+  test("cancels hold invoice and pay_invoice fails afterward", async () => {
       const receiver = await createTestWallet(BALANCE_SATS);
       const sender = await createTestWallet(BALANCE_SATS);
 
@@ -36,28 +34,6 @@ describe("NWC cancel_hold_invoice", () => {
       let payRejectionDrained: Promise<unknown> | undefined;
 
       try {
-        const infoResult = await receiverClient.getInfo();
-        const hasHoldMethods =
-          infoResult.methods.includes("make_hold_invoice") &&
-          infoResult.methods.includes("cancel_hold_invoice");
-
-        if (!hasHoldMethods) {
-          try {
-            await receiverClient.cancelHoldInvoice({ payment_hash: paymentHash });
-            throw new Error(
-              "Expected cancel_hold_invoice to fail when hold methods are unavailable",
-            );
-          } catch (error) {
-            if (
-              error instanceof Nip47WalletError &&
-              (error.code === "NOT_IMPLEMENTED" || error.code === "RESTRICTED")
-            ) {
-              return;
-            }
-            throw error;
-          }
-        }
-
         const holdInvoiceResult = await receiverClient.makeHoldInvoice({
           amount: AMOUNT_MSATS,
           payment_hash: paymentHash,
@@ -102,17 +78,11 @@ describe("NWC cancel_hold_invoice", () => {
           }
         }
 
-        const payOutcome = await payPromise.then(
-          () => ({ settled: true as const }),
-          (e) => ({ settled: false as const, e }),
+        const payError = await payPromise.catch((e) => e);
+        expect(payError).toBeInstanceOf(Nip47WalletError);
+        expect((payError as Nip47WalletError).message).toMatch(
+          /hold|canceled|cancel/i,
         );
-        if (payOutcome.settled) {
-          throw new Error("Expected pay_invoice to fail after hold cancel");
-        }
-        if (!(payOutcome.e instanceof Nip47WalletError)) {
-          throw payOutcome.e;
-        }
-        expect(payOutcome.e.message).toMatch(/hold|canceled|cancel/i);
       } finally {
         if (payPromise !== undefined) {
           await payPromise.catch(() => {});
