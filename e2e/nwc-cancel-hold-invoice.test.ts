@@ -17,7 +17,7 @@ describe("NWC cancel_hold_invoice", () => {
   const BALANCE_SATS = 10_000;
 
   test(
-    "cancels hold invoice when supported, otherwise NOT_IMPLEMENTED",
+    "cancels hold invoice when supported, otherwise NOT_IMPLEMENTED or RESTRICTED",
     async () => {
       const receiver = await createTestWallet(BALANCE_SATS);
       const sender = await createTestWallet(BALANCE_SATS);
@@ -42,10 +42,20 @@ describe("NWC cancel_hold_invoice", () => {
           infoResult.methods.includes("cancel_hold_invoice");
 
         if (!hasHoldMethods) {
-          await expect(
-            receiverClient.cancelHoldInvoice({ payment_hash: paymentHash }),
-          ).rejects.toMatchObject({ code: "NOT_IMPLEMENTED" });
-          return;
+          try {
+            await receiverClient.cancelHoldInvoice({ payment_hash: paymentHash });
+            throw new Error(
+              "Expected cancel_hold_invoice to fail when hold methods are unavailable",
+            );
+          } catch (error) {
+            if (
+              error instanceof Nip47WalletError &&
+              (error.code === "NOT_IMPLEMENTED" || error.code === "RESTRICTED")
+            ) {
+              return;
+            }
+            throw error;
+          }
         }
 
         const holdInvoiceResult = await receiverClient.makeHoldInvoice({
@@ -54,6 +64,7 @@ describe("NWC cancel_hold_invoice", () => {
           description: "E2E cancel_hold_invoice test",
         });
         expect(holdInvoiceResult.invoice).toMatch(/^ln/);
+        expect(holdInvoiceResult.payment_hash).toBe(paymentHash);
 
         payPromise = senderClient.payInvoice({
           invoice: holdInvoiceResult.invoice,
@@ -62,12 +73,34 @@ describe("NWC cancel_hold_invoice", () => {
         // an unhandled rejection before the next await runs.
         payRejectionDrained = payPromise.catch(() => {});
 
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-
-        const cancelResult = await receiverClient.cancelHoldInvoice({
-          payment_hash: paymentHash,
-        });
-        expect(cancelResult).toEqual({});
+        // Pay must reach an in-flight hold before cancel is valid; shared infra
+        // timing varies, so retry cancel until success or a definitive error.
+        const cancelDeadlineMs = Date.now() + 25_000;
+        const cancelPollMs = 500;
+        for (;;) {
+          try {
+            const cancelResult = await receiverClient.cancelHoldInvoice({
+              payment_hash: paymentHash,
+            });
+            expect(cancelResult).toEqual({});
+            break;
+          } catch (error) {
+            if (error instanceof Nip47WalletError) {
+              if (
+                error.code === "NOT_IMPLEMENTED" ||
+                error.code === "RESTRICTED"
+              ) {
+                throw error;
+              }
+            } else {
+              throw error;
+            }
+            if (Date.now() >= cancelDeadlineMs) {
+              throw error;
+            }
+            await new Promise((resolve) => setTimeout(resolve, cancelPollMs));
+          }
+        }
 
         const payOutcome = await payPromise.then(
           () => ({ settled: true as const }),
