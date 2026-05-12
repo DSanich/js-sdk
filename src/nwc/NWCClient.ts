@@ -172,12 +172,6 @@ export class NWCClient {
         : this.options.walletPubkey
     ) as string;
     // this.subscribers = {};
-
-    if (globalThis.WebSocket === undefined) {
-      console.error(
-        "WebSocket is undefined. Make sure to `import websocket-polyfill` for nodejs environments",
-      );
-    }
   }
 
   get nostrWalletConnectUrl() {
