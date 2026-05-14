@@ -8,9 +8,8 @@ import {
   getPublicKey,
   Event,
   EventTemplate,
-  SimplePool,
 } from "nostr-tools";
-import { hexToBytes, bytesToHex } from "@noble/hashes/utils";
+import { hexToBytes, bytesToHex } from "@noble/hashes/utils.js";
 import { Logger, noopLogger } from "../logger";
 import {
   Nip47EncryptionType,
@@ -56,7 +55,7 @@ import {
   Nip47CancelHoldInvoiceResponse,
   Nip47NetworkError,
 } from "./types";
-import { SubCloser } from "nostr-tools/lib/types/abstract-pool";
+import { ReconnectingPool } from "./ReconnectingPool";
 
 const NWC_HEX64 = /^[0-9a-f]{64}$/;
 
@@ -78,7 +77,7 @@ export type NewNWCClientOptions = {
 };
 
 export class NWCClient {
-  pool: SimplePool;
+  pool: ReconnectingPool;
   relayUrls: string[];
   secret: string | undefined;
   lud16: string | undefined;
@@ -161,7 +160,7 @@ export class NWCClient {
 
     this.relayUrls = this.options.relayUrls;
     this.logger = options?.logger || noopLogger;
-    this.pool = new SimplePool({});
+    this.pool = new ReconnectingPool();
     if (this.options.secret) {
       this.secret = (
         this.options.secret.toLowerCase().startsWith("nsec")
@@ -415,8 +414,15 @@ export class NWCClient {
     notifications: Nip47NotificationType[];
   }> {
     await this._checkConnected();
-    const events = await new Promise<Event[]>((resolve, reject) => {
-      const events: Event[] = [];
+    const event = await new Promise<Event>((resolve, reject) => {
+      let settled = false;
+      const timeoutId = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        sub.close();
+        reject(new Error("no info event (kind 13194) returned from relay"));
+      }, 10000);
+
       const sub = this.pool.subscribe(
         this.relayUrls,
         {
@@ -425,28 +431,22 @@ export class NWCClient {
           authors: [this.walletPubkey],
         },
         {
-          eoseTimeout: 10000,
           onevent: (event) => {
-            events.push(event);
-          },
-          oneose: () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeoutId);
             sub.close();
-            resolve(events);
+            resolve(event);
           },
         },
       );
     });
 
-    if (!events.length) {
-      throw new Error("no info event (kind 13194) returned from relay");
-    }
-    const content = events[0].content;
-    const notificationsTag = events[0].tags.find(
-      (t) => t[0] === "notifications",
-    );
+    const content = event.content;
+    const notificationsTag = event.tags.find((t) => t[0] === "notifications");
     // TODO: Remove version tag after 01-06-2025
-    const versionsTag = events[0].tags.find((t) => t[0] === "v");
-    const encryptionTag = events[0].tags.find((t) => t[0] === "encryption");
+    const versionsTag = event.tags.find((t) => t[0] === "v");
+    const encryptionTag = event.tags.find((t) => t[0] === "encryption");
 
     let encryptions: string[] = ["nip04" satisfies Nip47EncryptionType];
     // TODO: Remove version tag after 01-06-2025
@@ -742,91 +742,60 @@ export class NWCClient {
     onNotification: (notification: Nip47Notification) => void,
     notificationTypes?: Nip47NotificationType[],
   ): Promise<() => void> {
-    let subscribed = true;
-    let endPromise: (() => void) | undefined;
-    let sub: SubCloser | undefined;
-    (async () => {
-      while (subscribed) {
-        try {
-          await this._checkConnected();
-          await this._selectEncryptionType();
-          this.logger.debug("subscribing to relays");
-          sub = this.pool.subscribe(
-            this.relayUrls,
-            {
-              kinds: [...(this.encryptionType === "nip04" ? [23196] : [23197])],
-              authors: [this.walletPubkey],
-              "#p": [this.publicKey],
-            },
-            {
-              onevent: async (event) => {
-                let decryptedContent;
-                try {
-                  decryptedContent = await this.decrypt(
-                    this.walletPubkey,
-                    event.content,
-                  );
-                } catch (error) {
-                  console.error(
-                    "failed to decrypt request event content",
-                    error,
-                  );
-                  return;
-                }
-                let notification;
-                try {
-                  notification = JSON.parse(
-                    decryptedContent,
-                  ) as Nip47Notification;
-                } catch (e) {
-                  console.error("Failed to parse decrypted event content", e);
-                  return;
-                }
-                if (notification.notification) {
-                  if (
-                    !notificationTypes ||
-                    notificationTypes.indexOf(notification.notification_type) >
-                      -1
-                  ) {
-                    onNotification(notification);
-                  }
-                } else {
-                  console.error("No notification in response", notification);
-                }
-              },
-              onclose: (reasons) => {
-                // NOTE: this fires when all relays were closed once. There is no reconnect logic in nostr-tools
-                // See https://github.com/nbd-wtf/nostr-tools/issues/513
-                this.logger.debug("relay connection closed", reasons);
-                endPromise?.();
-              },
-            },
-          );
-          this.logger.debug("subscribed to relays");
+    this.logger.debug("checking connection to relays");
+    await this._checkConnected();
+    await this._selectEncryptionType();
 
-          await new Promise<void>((resolve) => {
-            endPromise = () => {
-              resolve();
-            };
-          });
-        } catch (error) {
-          console.error(
-            "error subscribing to notifications",
-            error || "unknown relay error",
-          );
-        }
-        if (subscribed) {
-          // wait a second and try re-connecting
-          // any notifications during this period will be lost
-          // unless using a relay that keeps events until client reconnect
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
-      }
-    })();
+    this.logger.debug("subscribing to relays");
+
+    const sub = this.pool.subscribe(
+      this.relayUrls,
+      {
+        kinds: [...(this.encryptionType === "nip04" ? [23196] : [23197])],
+        authors: [this.walletPubkey],
+        "#p": [this.publicKey],
+      },
+      {
+        onevent: async (event) => {
+          let decryptedContent;
+          try {
+            decryptedContent = await this.decrypt(
+              this.walletPubkey,
+              event.content,
+            );
+          } catch (error) {
+            console.error("failed to decrypt request event content", error);
+            return;
+          }
+          let notification;
+          try {
+            notification = JSON.parse(decryptedContent) as Nip47Notification;
+          } catch (e) {
+            console.error("Failed to parse decrypted event content", e);
+            return;
+          }
+          if (notification.notification) {
+            if (
+              !notificationTypes ||
+              notificationTypes.indexOf(notification.notification_type) > -1
+            ) {
+              onNotification(notification);
+            }
+          } else {
+            console.error("No notification in response", notification);
+          }
+        },
+        onconnect: (url) => {
+          this.logger.debug("relay connected", url);
+        },
+        ondisconnect: (url, reason) => {
+          this.logger.debug("relay disconnected", url, reason);
+        },
+      },
+    );
+    this.logger.debug("subscribed to relays");
 
     return () => {
-      subscribed = false;
-      endPromise?.();
       sub?.close();
     };
   }
@@ -969,9 +938,10 @@ export class NWCClient {
     });
   }
 
-  // TODO: this method currently fails if any payment fails.
-  // this could be improved in the future.
-  // TODO: reduce duplication between executeNip47Request and executeMultiNip47Request
+  /**
+   * @deprecated
+   * multi- methods were removed from NIP-47.
+   */
   private async executeMultiNip47Request<T>(
     nip47Method: Nip47MultiMethod,
     params: unknown,

@@ -1,5 +1,5 @@
-import { bytesToHex, hexToBytes } from "@noble/hashes/utils";
-import { generateSecretKey, getPublicKey, SimplePool } from "nostr-tools";
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
+import { generateSecretKey, getPublicKey } from "nostr-tools";
 import { Logger, noopLogger } from "../logger";
 import {
   BudgetRenewalPeriod,
@@ -8,7 +8,7 @@ import {
   Nip47NotificationType,
 } from "./types";
 import { NWCClient } from "./NWCClient";
-import { SubCloser } from "nostr-tools/lib/types/abstract-pool";
+import { ReconnectingPool } from "./ReconnectingPool";
 
 export type NWAOptions = {
   relayUrls: string[];
@@ -31,11 +31,10 @@ export type NewNWAClientOptions = Omit<NWAOptions, "appPubkey"> & {
   logger?: Logger;
 };
 
-// TODO: add support for multiple relay URLs
 export class NWAClient {
   options: NWAOptions;
   appSecretKey: string;
-  pool: SimplePool;
+  pool: ReconnectingPool;
   logger: Logger;
 
   constructor(options: NewNWAClientOptions) {
@@ -51,7 +50,7 @@ export class NWAClient {
     if (!this.options.requestMethods) {
       throw new Error("Missing request methods");
     }
-    this.pool = new SimplePool();
+    this.pool = new ReconnectingPool();
     this.logger = options.logger || noopLogger;
   }
 
@@ -173,81 +172,55 @@ export class NWAClient {
   }): Promise<{
     unsub: () => void;
   }> {
-    let subscribed = true;
-    let endPromise: (() => void) | undefined;
-    let sub: SubCloser | undefined;
-    (async () => {
-      while (subscribed) {
-        try {
-          await this._checkConnected();
+    this.logger.debug("checking connection to relays");
+    await this._checkConnected();
+    this.logger.debug("subscribing to info event");
 
-          sub = this.pool.subscribe(
-            this.options.relayUrls,
-            {
-              kinds: [13194], // NIP-47 info event
-              "#p": [this.options.appPubkey],
-            },
-            {
-              onevent: async (event) => {
-                const client = new NWCClient({
-                  relayUrls: this.options.relayUrls,
-                  secret: this.appSecretKey,
-                  walletPubkey: event.pubkey,
-                  logger: this.logger,
-                });
-
-                // try to fetch the lightning address
-                try {
-                  const info = await client.getInfo();
-                  client.options.lud16 = info.lud16;
-                  client.lud16 = info.lud16;
-                } catch (error) {
-                  console.error("failed to fetch get_info", error);
-                }
-
-                args.onSuccess(client);
-
-                subscribed = false;
-                endPromise?.();
-                sub?.close();
-              },
-              onclose: (reasons) => {
-                // NOTE: this fires when all relays were closed once. There is no reconnect logic in nostr-tools
-                // See https://github.com/nbd-wtf/nostr-tools/issues/513
-                this.logger.debug("relay connection closed", reasons);
-                endPromise?.();
-              },
-            },
-          );
-          this.logger.debug("subscribed to relays");
-
-          await new Promise<void>((resolve) => {
-            endPromise = () => {
-              resolve();
-            };
+    const sub = this.pool.subscribe(
+      this.options.relayUrls,
+      {
+        kinds: [13194], // NIP-47 info event
+        "#p": [this.options.appPubkey],
+      },
+      {
+        onevent: async (event) => {
+          const client = new NWCClient({
+            relayUrls: this.options.relayUrls,
+            secret: this.appSecretKey,
+            walletPubkey: event.pubkey,
           });
-        } catch (error) {
-          console.error(
-            "error subscribing to info event",
-            error || "unknown relay error",
-          );
-        }
-        if (subscribed) {
-          // wait a second and try re-connecting
-          // any events during this period will be lost
-          // unless using a relay that keeps events until client reconnect
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
-      }
-    })();
+
+          // try to fetch the lightning address
+          try {
+            const info = await client.getInfo();
+            client.options.lud16 = info.lud16;
+            client.lud16 = info.lud16;
+          } catch (error) {
+            console.error("failed to fetch get_info", error);
+          }
+
+          args.onSuccess(client);
+
+          sub?.close();
+        },
+        onconnect: (url) => {
+          this.logger.debug("relay connected", url);
+        },
+        ondisconnect: (url, reason) => {
+          this.logger.debug("relay disconnected", url, reason);
+        },
+      },
+    );
 
     return {
       unsub: () => {
-        subscribed = false;
-        endPromise?.();
         sub?.close();
       },
     };
+  }
+
+  close() {
+    return this.pool.close(this.options.relayUrls);
   }
 
   private async _checkConnected() {
