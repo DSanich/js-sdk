@@ -1,18 +1,18 @@
 import { NWCClient } from "../src/nwc/NWCClient";
-import { createTestWallet } from "./helpers";
 
 /**
- * E2E test for get_budget using the NWC faucet.
+ * E2E test for get_budget using a pre-configured NWC connection.
+ * Set E2E_NWC_BUDGET_URL to an NWC URL with an explicit budget configured.
  * Requires network access.
  */
 describe("NWC get_budget", () => {
-  const BALANCE_SATS = 10_000;
+  const budgetNwcUrl = process.env.E2E_NWC_BUDGET_URL;
+  const runBudgetTest = budgetNwcUrl ? test : test.skip;
 
-  test(
+  runBudgetTest(
     "returns budget details",
     async () => {
-      const { nwcUrl } = await createTestWallet(BALANCE_SATS);
-      const nwc = new NWCClient({ nostrWalletConnectUrl: nwcUrl });
+      const nwc = new NWCClient({ nostrWalletConnectUrl: budgetNwcUrl! });
 
       try {
         const budgetResult = await nwc.getBudget();

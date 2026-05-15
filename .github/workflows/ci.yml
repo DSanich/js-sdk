@@ -10,6 +10,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      E2E_NWC_BUDGET_URL: ${{ secrets.E2E_NWC_BUDGET_URL }}
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-node@v3
