@@ -2,17 +2,16 @@ import { NWCClient } from "../src/nwc/NWCClient";
 
 /**
  * E2E test for get_budget using a pre-configured NWC connection.
- * Set E2E_NWC_BUDGET_URL to an NWC URL with an explicit budget configured.
  * Requires network access.
  */
 describe("NWC get_budget", () => {
-  const budgetNwcUrl = process.env.E2E_NWC_BUDGET_URL;
-  const runBudgetTest = budgetNwcUrl ? test : test.skip;
+  const budgetNwcUrl =
+    "nostr+walletconnect://65609388dbda7d247a2735568582c18a20e2e9ceb12b59455bc1c0cc0d1067f9?relay=wss://relay.getalby.com&relay=wss://relay2.getalby.com&secret=f0e514c911ab2ce760c34ef802f339ca8db9f8eaa72b51db0882f25cc6f9ecf3&lud16=nwc1778830210362@getalby.com";
 
-  runBudgetTest(
+  test(
     "returns budget details",
     async () => {
-      const nwc = new NWCClient({ nostrWalletConnectUrl: budgetNwcUrl! });
+      const nwc = new NWCClient({ nostrWalletConnectUrl: budgetNwcUrl });
 
       try {
         const budgetResult = await nwc.getBudget();
