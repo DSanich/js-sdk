@@ -20,10 +20,7 @@ describe("NWC get_balance", () => {
 
         expect(balanceResult.balance).toBeDefined();
         expect(typeof balanceResult.balance).toBe("number");
-        // Faucet balances are approximate; avoid exact equality with the requested amount.
-        expect(balanceResult.balance).toBeGreaterThanOrEqual(
-          Math.floor(BALANCE_MSATS * 0.9),
-        );
+        expect(balanceResult.balance).toBe(BALANCE_MSATS);
       } finally {
         nwc.close();
       }
